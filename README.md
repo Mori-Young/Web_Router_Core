@@ -4,7 +4,7 @@ Web_Router_Core aims to understand the principles of vue-router and react-router
 
 # 前提
 
-![前提知识](image/image1.png)
+![前提知识](image.png)
 
 # Vanilla Router
 
