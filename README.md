@@ -92,3 +92,219 @@ function syncView() {
     }
 }
 ```
+
+# React Router
+
+## 基于 Hash
+
+首先是使用方式：
+
+```tsx
+const App = () => {
+    return (
+        <>
+            <h1>{import.meta.env.VITE_HASH ? "Hash" : "History"}</h1>
+            <Link to="/home">Home</Link>
+            <br />
+            <Link to="/about">About</Link>
+            <br />
+            <RouteView path="/home" render={() => <div>Home</div>} />
+            <RouteView path="/about" render={() => <div>About</div>} />
+        </>
+    );
+};
+
+root.render(
+    <Router>
+        <App />
+    </Router>
+);
+```
+
+因此需要封装组件：
+
+-   `Router`
+    -   提供当前 url hash;
+    -   绑定`hashchange`事件
+-   `Link`
+    -   修改 url，hash 模式直接利用`<a>`的 href 属性即可
+-   `RouteView`
+    -   组件展示容器，path 和 url 匹配则渲染对应组件
+    -   需要消费`Router`提供的 hash
+
+实现：
+`Router`实际上是一个`Provider`
+
+```tsx
+import {
+    createContext,
+    ReactNode,
+    useContext,
+    useEffect,
+    useState,
+} from "react";
+
+interface HashContext {
+    hash: string;
+}
+const HashContext = createContext<HashContext | null>(null);
+
+export const useHashContext = () => {
+    const context = useContext(HashContext);
+    return context?.hash;
+};
+
+const Router: React.FC<{ children: ReactNode }> = ({ children }) => {
+    const [hash, setHash] = useState<string>(window.location.hash);
+
+    useEffect(() => {
+        // 注册hashchange
+        function handleHashChange() {
+            setHash(window.location.hash);
+        }
+        window.addEventListener("hashchange", handleHashChange);
+
+        return () => {
+            window.removeEventListener("hashchange", handleHashChange);
+        };
+    }, []);
+
+    return (
+        <HashContext.Provider value={{ hash }}>{children}</HashContext.Provider>
+    );
+};
+
+export default Router;
+```
+
+`Link` 组件就是普调的`<a>`标签，href 属性为 hash 路径
+
+```tsx
+interface LinkProps {
+    to: string;
+    children: React.ReactNode;
+}
+const Link: React.FC<LinkProps> = ({ to, children }) => {
+    return <a href={"#" + to}>{children}</a>;
+};
+
+export default Link;
+```
+
+`RouteView` 组件判断 url 的 hash 和指定的 path 是否匹配来渲染对应组件
+
+```tsx
+import { useHashContext } from "./Router";
+
+interface RouteViewProps {
+    path: string;
+    render: () => React.ReactNode;
+}
+const RouteView: React.FC<RouteViewProps> = ({ path, render }) => {
+    const hash = useHashContext();
+    return hash === "#" + path ? render() : null;
+};
+
+export default RouteView;
+```
+
+## 基于 History
+
+使用方式和 Hash 相同
+
+**主要不同是：History 模式下触发 url 修改需要 `pushState`，但是这个方法不会触发任何事件，因此需要主动触发视图更新，那么就需要提供触发的方法给`Link`组件**
+
+`Router`：
+
+```tsx
+import {
+    createContext,
+    ReactNode,
+    useContext,
+    useEffect,
+    useState,
+} from "react";
+
+interface HistoryContext {
+    href: string;
++    syncView: () => void;
+}
+const HistoryContext = createContext<HistoryContext | null>(null);
+
+export const useHistoryContext = () => {
+    const context = useContext(HistoryContext);
++    return { href: context?.href, syncView: context?.syncView };
+};
+
+const HistoryRouter: React.FC<{ children: ReactNode }> = ({ children }) => {
+    const [href, setHash] = useState<string>(window.location.href);
+
+    function handlePopState() {
+        setHash(window.location.href);
+    }
+    useEffect(() => {
+        // 注册popstate
+        window.addEventListener("popstate", handlePopState);
+
+        return () => {
+            window.removeEventListener("popstate", handlePopState);
+        };
+    }, []);
+
+    return (
++        <HistoryContext.Provider value={{ href, syncView: handlePopState }}>
+            {children}
+        </HistoryContext.Provider>
+    );
+};
+
+export default HistoryRouter;
+```
+
+`Link`: 阻止默认行为；修改 url；触发视图更新
+
+```tsx
+import { useHistoryContext } from "./Router";
+
+interface LinkProps {
+    to: string;
+    children: React.ReactNode;
+}
+const Link: React.FC<LinkProps> = ({ to, children }) => {
++    const { syncView } = useHistoryContext();
+
++    function handleLinkClick(e: React.MouseEvent<HTMLAnchorElement>) {
++        e.preventDefault();
++        window.history.pushState(null, "", to);
++        syncView?.();
++    }
+    return (
+        <a href={to} onClick={handleLinkClick}>
+            {children}
+        </a>
+    );
+};
+
+export default Link;
+```
+
+`RouteView`: 功能没有变化，都是匹配 url 和 path prop 决定是否渲染
+
+```tsx
+import { useHistoryContext } from "./Router";
+
+interface RouteViewProps {
+    path: string;
+    render: () => React.ReactNode;
+}
+const RouteView: React.FC<RouteViewProps> = ({ path, render }) => {
+    const { href } = useHistoryContext();
+    const curHref = href?.slice(
+        window.location.origin.length,
+        window.location.origin.length + path.length
+    );
+    return curHref === path ? render() : null;
+};
+
+export default RouteView;
+```
